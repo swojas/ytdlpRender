@@ -39,6 +39,7 @@ def get_transcript(req: TranscriptRequest, api_key: str = Depends(get_api_key)):
         'writeautomaticsub': True,
         'subtitleslangs': ['en'],
         'quiet': True,
+        'extractor_args': {'youtube': {'client': ['android', 'ios']}}
     }
     
     url = f"https://www.youtube.com/watch?v={req.videoId}"
