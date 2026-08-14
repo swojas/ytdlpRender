@@ -33,6 +33,35 @@ class TranscriptRequest(BaseModel):
 
 @app.post("/transcript")
 def get_transcript(req: TranscriptRequest, api_key: str = Depends(get_api_key)):
+    # Method 1: Try youtube_transcript_api first (it often bypasses poToken)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        # Just grab the english transcript directly
+        transcript_list = YouTubeTranscriptApi.list_transcripts(req.videoId)
+        
+        # Try to find English manually created, else auto generated
+        try:
+            transcript = transcript_list.find_transcript(['en', 'en-US', 'en-GB'])
+        except:
+            # Fallback to any english
+            transcript = [t for t in transcript_list if t.language_code.startswith('en')][0]
+            
+        data = transcript.fetch()
+        segments = []
+        for item in data:
+            segments.append({
+                'text': item['text'],
+                'start': item['start'],
+                'duration': item['duration']
+            })
+            
+        if segments:
+            return {"segments": segments}
+    except Exception as e:
+        print("youtube_transcript_api failed:", str(e))
+        pass # Fallback to yt-dlp
+
+    # Method 2: yt-dlp fallback
     ydl_opts = {
         'skip_download': True,
         'writesubtitles': True,
@@ -42,11 +71,15 @@ def get_transcript(req: TranscriptRequest, api_key: str = Depends(get_api_key)):
         'extractor_args': {'youtube': {'client': ['android', 'ios']}}
     }
     
+    # Add proxy if available
+    proxy_url = os.getenv("PROXY_URL")
+    if proxy_url:
+        ydl_opts['proxy'] = proxy_url
+        
     url = f"https://www.youtube.com/watch?v={req.videoId}"
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # We don't need to actually download the video, just get the info
             info = ydl.extract_info(url, download=False)
             
             subs = info.get('subtitles', {})
@@ -56,7 +89,6 @@ def get_transcript(req: TranscriptRequest, api_key: str = Depends(get_api_key)):
             if not en_subs:
                 raise HTTPException(status_code=404, detail="No transcript (disabled or missing)")
                 
-            # yt-dlp returns a list of formats. We want json3 for exact timestamps.
             json3_track = next((s for s in en_subs if s['ext'] == 'json3'), None)
             if not json3_track:
                 raise HTTPException(status_code=404, detail="No json3 transcript format found")
